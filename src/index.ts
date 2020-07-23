@@ -1,44 +1,131 @@
-// 4 types grammar
-// Type-0 turing complete
-// Type-1 context-sensitive
-// Type-2 context-free
-// Type-3 regular
+/**
+ * Markdown parser based on the CommonMark Spec
+ * See: https://spec.commonmark.org/
+ * See also: https://daringfireball.net/projects/markdown/syntax
+ */
 
-// const symbols = [
-//     { symbol: /#/, translation: "h1" },
-//     { symbol: /##/, translation: "h2" },
-//     { symbol: /.*/, translation: "p" }
-// ];
+// TODO Maybe do dl?
+// TODO Lists can have paragraphs inside
 
-const MARKDOWN =
-    "# Welcome to the Solid Prototype\n" +
-    "## This is a prototype implementation of a Solid server\n" +
-    "It is a fully functional server,\n" +
-    "but there are no security or stability guarantees.\n" +
-    "\n" +
-    "If you have not already done so, please create an account.";
+import { grammar, MDElement, MDSymbol, MDSymbolType } from "./grammar";
 
-// const HTML =
-//     "<h1>Welcome to the Solid Prototype</h1>\n" +
-//     "<h2>This is a prototype implementation of a Solid server</h2>\n" +
-//     "<p>It is a fully functional server, but there are no security or stability guarantees.</p>\n" +
-//     "<p>If you have not already done so, please create an account.</p>\n";
+type Token = {
+    value: string;
+    symbol: MDSymbol;
+};
 
-export function convertMarkdownToHTML(markdown: string = MARKDOWN): string {
-    return markdown
-        .split("\n")
-        .filter((x) => x)
-        .map((x) => {
-            if (x.match(/##/)) {
-                return "<h2>".concat(x.slice(3)).concat("</h2>\n");
-            } else if (x.match(/#/)) {
-                return "<h1>".concat(x.slice(2)).concat("</h1>\n");
-            }
-            return "<p>".concat(x).concat("</p>\n");
-        })
-        .reduce((previousValue, currentValue, currentIndex) => {
-            return (previousValue += currentValue);
-        });
+function* read(
+    markdown: string,
+    splitter: string
+): IterableIterator<string | undefined> {
+    yield* markdown.split(splitter);
 }
 
-console.log(convertMarkdownToHTML());
+function currentSymbol(token: string): MDSymbol {
+    for (const symbol of grammar) {
+        if (token.match(symbol.regex)) {
+            return symbol;
+        }
+    }
+    return grammar[grammar.length - 1];
+}
+
+function mergeTokens(a: string, b: string): string {
+    return a.trim().concat(" ").concat(b.trim()).trim();
+}
+
+function applySymbol(token: Token): string {
+    return token.symbol.tag
+        ? token.symbol.tag.closing
+            ? token.symbol.tag.opening
+                  .concat(token.value.replace(token.symbol.regex, ""))
+                  .concat(token.symbol.tag.closing)
+            : token.symbol.tag.opening.concat(
+                  token.value.replace(token.symbol.regex, "")
+              )
+        : token.value.replace(token.symbol.regex, "");
+}
+
+function parseLines(markdown: string): Array<Token> {
+    const result: Array<Token> = [];
+
+    // Read Markdown line by line
+    for (const line of read(markdown.concat("\n"), "\n")) {
+        if (typeof line == "undefined") {
+            break;
+        } else {
+            const symbol = currentSymbol(line);
+            // Reduce undefined lines
+            if (
+                result.length > 1 &&
+                result[result.length - 1].symbol.element == MDElement.undefined
+            ) {
+                // Merge undefined
+                if (symbol.element == MDElement.undefined) {
+                    result[result.length - 1].value = mergeTokens(
+                        result[result.length - 1].value,
+                        line
+                    );
+                }
+                // Apply h1 suffix
+                else if (
+                    symbol.element == MDElement.h1 &&
+                    symbol.type == MDSymbolType.suffix
+                ) {
+                    result[result.length - 1].symbol = symbol;
+                }
+                // Apply h2 suffix
+                else if (
+                    symbol.element == MDElement.h2 &&
+                    symbol.type == MDSymbolType.suffix
+                ) {
+                    result[result.length - 1].symbol = symbol;
+                }
+                // Apply p suffix
+                else if (
+                    symbol.element == MDElement.p &&
+                    symbol.type == MDSymbolType.suffix
+                ) {
+                    result[result.length - 1].symbol = symbol;
+                }
+            }
+            // Reduce unused suffixes
+            else if (
+                result.length > 1 &&
+                symbol.type == MDSymbolType.suffix &&
+                result[result.length - 1].symbol.element != MDElement.undefined
+            ) {
+                result[result.length - 1].value = mergeTokens(
+                    result[result.length - 1].value,
+                    line
+                );
+            } else {
+                result.push({ value: line, symbol: symbol });
+            }
+        }
+    }
+
+    return result;
+}
+
+export function convertMarkdownToHTML(markdown: string): string {
+    return parseLines(markdown)
+        .map((token) => applySymbol(token))
+        .join("\n")
+        .concat("\n");
+}
+
+const test =
+    "# Welcome to the Solid Prototype\n" +
+    "  # Welcome to the Solid Prototype\n" +
+    "\n \n" +
+    "    # Welcome to the Solid Prototype\n" +
+    "## This is a prototype implementation of a Solid server\n" +
+    "It is a fully functional server,\n\n" +
+    "but there are no security or stability guarantees.\n" +
+    "undefined\n" +
+    "  \t  \n" +
+    "=\n" +
+    "If you have not already done so, please create an account.\n\n";
+
+console.log(convertMarkdownToHTML(test));
